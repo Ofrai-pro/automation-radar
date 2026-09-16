@@ -24,3 +24,5 @@ n8n, RSS, JavaScript, Google Gemini, Telegram Bot API.
 Работу с RSS, JavaScript-узлами n8n, обработку текста, фильтрацию, дедупликацию, LLM и интеграцию с Telegram.
 
 > Это учебный проект. Данные Telegram и подключения к сервисам не публикуются.
+>
+> ![Схема workflow](workflow-radar.PNG)
