@@ -1,0 +1,272 @@
+{
+  "name": "Automation Radar — portfolio template",
+  "nodes": [
+    {
+      "name": "n8n Blog",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        400,
+        64
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 30,
+              "unit": "minutes"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "n8n Releases",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        400,
+        336
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 30,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "feedUrl": "https://github.com/n8n-io/n8n/releases.atom"
+      }
+    },
+    {
+      "name": "OpenAI News",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        400,
+        624
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 30,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "feedUrl": "https://openai.com/news/rss.xml"
+      }
+    },
+    {
+      "name": "Google Developers",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        400,
+        896
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 30,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "feedUrl": "https://developers.googleblog.com/feeds/posts/default?alt=rss"
+      }
+    },
+    {
+      "name": "Нормализовать новость",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $json;\n\nconst stripHtml = (value = '') =>\n  String(value)\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\s+/g, ' ')\n    .trim();\n\nconst title = stripHtml(j.title || j.name || 'Без названия');\nconst link = String(j.link || j.guid || j.id || '').trim();\nconst content = stripHtml(\n  j.contentSnippet ||\n  j.content ||\n  j.summary ||\n  j.description ||\n  j['content:encoded'] ||\n  ''\n);\nconst publishedAt =\n  j.isoDate ||\n  j.pubDate ||\n  j.published ||\n  j.updated ||\n  new Date().toISOString();\n\nlet source = 'Неизвестный источник';\nconst host = (() => {\n  try { return new URL(link).hostname.toLowerCase(); }\n  catch { return ''; }\n})();\n\nif (host.includes('n8n.io')) source = 'n8n';\nelse if (host.includes('github.com')) source = 'n8n GitHub';\nelse if (host.includes('openai.com')) source = 'OpenAI';\nelse if (host.includes('googleblog.com')) source = 'Google Developers';\n\nreturn {\n  json: {\n    title,\n    link,\n    content: content.slice(0, 6000),\n    publishedAt,\n    source\n  }\n};"
+      }
+    },
+    {
+      "name": "Оценка и дедупликация",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const inputs = $input.all();\nconst output = [];\nconst now = Date.now();\n\nconst normalizeKey = (value = '') =>\n  String(value)\n    .toLowerCase()\n    .replace(/^https?:\\/\\/(www\\.)?/, '')\n    .replace(/[?#].*$/, '')\n    .replace(/[^a-zа-яё0-9]+/gi, ' ')\n    .trim();\n\nconst weights = {\n  n8n: 30,\n  automation: 16,\n  workflow: 14,\n  'ai agent': 20,\n  agentic: 16,\n  mcp: 18,\n  api: 10,\n  webhook: 12,\n  gemini: 14,\n  openai: 12,\n  anthropic: 12,\n  claude: 10,\n  llm: 10,\n  rag: 12,\n  'tool calling': 16,\n  'function calling': 14,\n  integration: 9,\n  'telegram bot': 12,\n  'breaking change': 24,\n  deprecated: 24,\n  deprecation: 24,\n  migration: 18,\n  security: 12,\n  vulnerability: 18,\n  release: 10,\n  tutorial: 7,\n};\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.seen = staticData.seen || {};\n\nconst cutoff = now - 90 * 24 * 60 * 60 * 1000;\n\nfor (const [storedKey, timestamp] of Object.entries(staticData.seen)) {\n  if (timestamp < cutoff) {\n    delete staticData.seen[storedKey];\n  }\n}\n\nfor (const input of inputs) {\n  const item = input.json ?? {};\n  const text =\n    `${item.title ?? ''} ${item.content ?? ''}`.toLowerCase();\n\n  let score = 0;\n  const matched = [];\n\n  for (const [keyword, weight] of Object.entries(weights)) {\n    if (text.includes(keyword)) {\n      score += weight;\n      matched.push(keyword);\n    }\n  }\n\n  if (item.source === 'n8n GitHub') {\n    score += 35;\n  } else if (item.source === 'n8n') {\n    score += 25;\n  } else if (item.source === 'OpenAI') {\n    score += 12;\n  } else if (item.source === 'Google Developers') {\n    score += 8;\n  }\n\n  const publishedMs = Date.parse(item.publishedAt);\n\n  if (Number.isFinite(publishedMs)) {\n    const ageHours = (now - publishedMs) / 3600000;\n\n    if (ageHours <= 24) {\n      score += 12;\n    } else if (ageHours <= 72) {\n      score += 6;\n    } else if (ageHours > 24 * 21) {\n      score -= 20;\n    }\n  }\n\n  score = Math.max(0, Math.min(100, score));\n\n  const key =\n    normalizeKey(item.link) ||\n    normalizeKey(item.title);\n\n  if (!key) continue;\n  if (staticData.seen[key]) continue;\n  if (score < 38) continue;\n\n  staticData.seen[key] = now;\n\n  const preview = String(item.content ?? '').slice(0, 900);\n\n  output.push({\n    json: {\n      ...item,\n      score,\n      matchedKeywords: matched,\n      analysisInput: {\n        title: item.title ?? 'Без названия',\n        source: item.source ?? 'Неизвестный источник',\n        publishedAt: item.publishedAt ?? '',\n        content: preview,\n        link: item.link ?? '',\n        deterministicScore: score,\n        matchedKeywords: matched,\n      },\n    },\n  });\n}\n\nreturn output;"
+      }
+    },
+    {
+      "name": "AI-редактор новости",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1760,
+        480
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Ты — редактор персонального радара новостей об автоматизации.\n\nПрофиль читателя:\n- начинающий разработчик автоматизаций;\n- изучает n8n, API, Telegram-ботов и AI-агентов;\n- изучает практические инструменты автоматизации;\n- хочет получать только практически полезные изменения;\n- не хочет информационного шума.\n\nМатериал:\nЗаголовок: {{ $json.analysisInput.title }}\nИсточник: {{ $json.analysisInput.source }}\nДата: {{ $json.analysisInput.publishedAt }}\nПредварительная оценка: {{ $json.analysisInput.deterministicScore }}/100\nКлючевые совпадения: {{ $json.analysisInput.matchedKeywords.join(', ') }}\nТекст: {{ $json.analysisInput.content }}\nСсылка: {{ $json.analysisInput.link }}\n\nПравила:\n1. Если материал рекламный, общий, политический, корпоративный или не даёт практической пользы для n8n/API/AI-агентов — верни ровно: SKIP\n2. Иначе напиши на русском короткое сообщение без вступления.\n3. Формат:\n🛰 Название\nВажность: X/100\nЧто изменилось: 1–2 предложения\nПочему важно лично мне: 1–2 предложения\nЧто сделать: одно конкретное действие\n4. Не придумывай факты, которых нет в материале.\n5. Не вставляй ссылку: она будет добавлена автоматически.\n6. Максимум 900 символов.\n",
+        "batching": {}
+      }
+    },
+    {
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        752
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "name": "Подготовить Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2176,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const original = $('Оценка и дедупликация').item.json;\nconst aiText = String($json.text ?? $json.output ?? '').trim();\n\nif (!aiText || /^SKIP[.!]?$/i.test(aiText)) return [];\n\nconst clean = aiText\n  .replace(/^```(?:markdown|text)?\\s*/i, '')\n  .replace(/```$/i, '')\n  .trim();\n\nconst maxBody = 3300;\nconst body = clean.length > maxBody\n  ? `${clean.slice(0, maxBody)}…`\n  : clean;\n\nreturn {\n  json: {\n    ...original,\n    telegramText: `${body}\\n\\n${original.link}`\n  }\n};"
+      }
+    },
+    {
+      "name": "Отправить в Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2560,
+        480
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.telegramText }}",
+        "additionalFields": {}
+      },
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "n8n Blog": {
+      "main": [
+        [
+          {
+            "node": "Нормализовать новость",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n Releases": {
+      "main": [
+        [
+          {
+            "node": "Нормализовать новость",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI News": {
+      "main": [
+        [
+          {
+            "node": "Нормализовать новость",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Developers": {
+      "main": [
+        [
+          {
+            "node": "Нормализовать новость",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нормализовать новость": {
+      "main": [
+        [
+          {
+            "node": "Оценка и дедупликация",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Оценка и дедупликация": {
+      "main": [
+        [
+          {
+            "node": "AI-редактор новости",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI-редактор новости",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI-редактор новости": {
+      "main": [
+        [
+          {
+            "node": "Подготовить Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Подготовить Telegram": {
+      "main": [
+        [
+          {
+            "node": "Отправить в Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
